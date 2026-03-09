@@ -166,6 +166,10 @@ const XRayAnnotation = () => {
             setSelectedAnnotation(null);
           }
           break;
+        case "escape":
+          handleToolChange("select");
+          setIsPanning(false);
+          break;
       }
     };
 
