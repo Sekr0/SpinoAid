@@ -92,6 +92,8 @@ const ImageCanvas = ({
   const [currentAnnotation, setCurrentAnnotation] = useState<Annotation | null>(null);
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
   const [angleStep, setAngleStep] = useState<number>(0);
+  const [drawStep, setDrawStep] = useState<number>(0);
+  const [drawTool, setDrawTool] = useState<AnnotationTool | null>(null);
   const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null);
 
   // Use a ref for currentAnnotation to avoid stale closures during event handling
@@ -309,7 +311,51 @@ const ImageCanvas = ({
     const dampedX = startPos.x + (newPos.x - startPos.x) * damping;
     const dampedY = startPos.y + (newPos.y - startPos.y) * damping;
 
-    // For Box/Text/Line/Circle/Ellipse, we use a stable anchor (the corner opposite to the handle)
+    // Special handling for line/ruler: move only the dragged endpoint
+    if (annotation.type === "line" || annotation.type === "ruler") {
+      const [p0, p1] = annotation.points;
+      if (handle === "w") {
+        return {
+          ...annotation,
+          points: [
+            { x: dampedX, y: dampedY },
+            { ...p1 },
+          ],
+        };
+      }
+      if (handle === "e") {
+        return {
+          ...annotation,
+          points: [
+            { ...p0 },
+            { x: dampedX, y: dampedY },
+          ],
+        };
+      }
+      return annotation;
+    }
+
+    // Special handling for circle: keep it resizing diagonally (square bounding box)
+    if (annotation.type === "circle") {
+      const anchor = resizeAnchor || annotation.points[0];
+      const dx = dampedX - anchor.x;
+      const dy = dampedY - anchor.y;
+      const size = Math.max(Math.abs(dx), Math.abs(dy));
+      const signX = dx === 0 ? 1 : Math.sign(dx);
+      const signY = dy === 0 ? 1 : Math.sign(dy);
+
+      const newP1 = {
+        x: anchor.x + signX * size,
+        y: anchor.y + signY * size,
+      };
+
+      return {
+        ...annotation,
+        points: [anchor, newP1],
+      };
+    }
+
+    // For Box/Text/Circle/Ellipse, we use a stable anchor (the corner opposite to the handle)
     // to prevent the "snap back/flip" issue.
     const anchor = resizeAnchor || annotation.points[0];
     let newP1 = { x: dampedX, y: dampedY };
@@ -331,9 +377,22 @@ const ImageCanvas = ({
   // Check if point is on a resize handle
   const getResizeHandleAtPoint = (pos: { x: number; y: number }, annotation: Annotation): ResizeHandle => {
     if (!annotation || annotation.points.length < 2) return null;
-    if (!["box", "ellipse", "text", "circle", "line", "ruler"].includes(annotation.type)) return null;
 
     const handleSize = 8 / zoom;
+
+    // For line and ruler, use bold endpoint handles instead of bounding box handles
+    if (annotation.type === "line" || annotation.type === "ruler") {
+      const [p0, p1] = annotation.points;
+      const distToStart = Math.hypot(pos.x - p0.x, pos.y - p0.y);
+      const distToEnd = Math.hypot(pos.x - p1.x, pos.y - p1.y);
+
+      if (distToStart < handleSize) return "w"; // treat as start endpoint
+      if (distToEnd < handleSize) return "e";   // treat as end endpoint
+      return null;
+    }
+
+    if (!["box", "ellipse", "text", "circle"].includes(annotation.type)) return null;
+
     const bounds = getAnnotationBounds(annotation);
     if (!bounds) return null;
 
@@ -345,13 +404,15 @@ const ImageCanvas = ({
     if (Math.abs(pos.x - minX) < handleSize && Math.abs(pos.y - maxY) < handleSize) return "sw";
     if (Math.abs(pos.x - maxX) < handleSize && Math.abs(pos.y - maxY) < handleSize) return "se";
 
-    // Edge handles
+    // Edge handles (for non-circle shapes only)
     const midX = (minX + maxX) / 2;
     const midY = (minY + maxY) / 2;
-    if (Math.abs(pos.x - midX) < handleSize && Math.abs(pos.y - minY) < handleSize) return "n";
-    if (Math.abs(pos.x - midX) < handleSize && Math.abs(pos.y - maxY) < handleSize) return "s";
-    if (Math.abs(pos.x - minX) < handleSize && Math.abs(pos.y - midY) < handleSize) return "w";
-    if (Math.abs(pos.x - maxX) < handleSize && Math.abs(pos.y - midY) < handleSize) return "e";
+    if (annotation.type !== "circle") {
+      if (Math.abs(pos.x - midX) < handleSize && Math.abs(pos.y - minY) < handleSize) return "n";
+      if (Math.abs(pos.x - midX) < handleSize && Math.abs(pos.y - maxY) < handleSize) return "s";
+      if (Math.abs(pos.x - minX) < handleSize && Math.abs(pos.y - midY) < handleSize) return "w";
+      if (Math.abs(pos.x - maxX) < handleSize && Math.abs(pos.y - midY) < handleSize) return "e";
+    }
 
     return null;
   };
@@ -370,6 +431,19 @@ const ImageCanvas = ({
 
       const newX = mouseX - (mouseX - position.x) * (newZoom / zoom);
       const newY = mouseY - (mouseY - position.y) * (newZoom / zoom);
+
+      // If we are currently drawing a shape that uses two points (like line, ruler, box, circle, ellipse),
+      // keep the "current" endpoint under the mouse after zoom.
+      const drawableTypes: AnnotationTool[] = ["line", "ruler", "box", "circle", "ellipse"];
+      if (isDrawingRef.current && currentAnnotationRef.current && drawableTypes.includes(currentAnnotationRef.current.type)) {
+        const imageX = (mouseX - newX) / newZoom;
+        const imageY = (mouseY - newY) / newZoom;
+        const startPoint = currentAnnotationRef.current.points[0];
+        updateCurrentAnnotation({
+          ...currentAnnotationRef.current,
+          points: [startPoint, { x: imageX, y: imageY }],
+        });
+      }
 
       onPositionChange({ x: newX, y: newY });
     }
@@ -503,6 +577,51 @@ const ImageCanvas = ({
       return;
     }
 
+    // Tools that should use click-click (start click, move freely, end click)
+    const isClickShapeTool =
+      activeTool === "line" ||
+      activeTool === "ruler" ||
+      activeTool === "box" ||
+      activeTool === "circle" ||
+      activeTool === "ellipse";
+
+    if (isClickShapeTool) {
+      // First click: start shape at this position
+      if (drawStep === 0 || drawTool !== activeTool || !currentAnnotationRef.current) {
+        isDrawingRef.current = true;
+        setIsDrawing(true);
+        const newAnnotation: Annotation = {
+          id: Date.now().toString(),
+          type: activeTool,
+          points: [pos, pos],
+          color: ANNOTATION_COLORS[activeTool],
+          label: `${activeTool.charAt(0).toUpperCase() + activeTool.slice(1)} ${annotations.filter(a => a.type === activeTool).length + 1}`,
+        };
+        updateCurrentAnnotation(newAnnotation);
+        setDrawStep(1);
+        setDrawTool(activeTool);
+        return;
+      }
+
+      // Second click: finalize shape at this position
+      if (drawStep === 1 && drawTool === activeTool && currentAnnotationRef.current) {
+        const completedShape: Annotation = {
+          ...currentAnnotationRef.current,
+          points: [currentAnnotationRef.current.points[0], pos],
+        };
+        onAnnotationsChange([...annotations, completedShape]);
+        onSelectedAnnotationChange(completedShape.id);
+        onToolChange("select");
+        setIsDrawing(false);
+        isDrawingRef.current = false;
+        setDrawStep(0);
+        setDrawTool(null);
+        updateCurrentAnnotation(null);
+        return;
+      }
+    }
+
+    // Default drag-to-draw behavior for other tools (e.g., freehand)
     isDrawingRef.current = true;
     setIsDrawing(true);
     const newAnnotation: Annotation = {
@@ -614,6 +733,17 @@ const ImageCanvas = ({
     };
   }, [dragStart, isDragging, isResizing, isErasing, isDrawing]);
 
+  // Reset click-click drawing state when switching tools
+  useEffect(() => {
+    if (drawStep !== 0 && activeTool !== drawTool) {
+      setDrawStep(0);
+      setDrawTool(null);
+      setIsDrawing(false);
+      isDrawingRef.current = false;
+      updateCurrentAnnotation(null);
+    }
+  }, [activeTool, drawStep, drawTool]);
+
   const handleMouseUp = () => {
     if (dragStart) {
       setDragStart(null);
@@ -642,6 +772,17 @@ const ImageCanvas = ({
     }
 
     if (isDrawing && currentAnnotation) {
+      // For click-click tools, ignore mouse up between clicks (we finalize on second click)
+      const isClickShapeTool =
+        currentAnnotation.type === "line" ||
+        currentAnnotation.type === "ruler" ||
+        currentAnnotation.type === "box" ||
+        currentAnnotation.type === "circle" ||
+        currentAnnotation.type === "ellipse";
+
+      if (isClickShapeTool && drawStep === 1 && drawTool === currentAnnotation.type) {
+        return;
+      }
       if (activeTool === "text" && textBoxStart) {
         const endPos = currentAnnotation.points[1] || textBoxStart;
         const width = Math.abs(endPos.x - textBoxStart.x);
@@ -743,6 +884,35 @@ const ImageCanvas = ({
 
     const renderSelectionHighlight = () => {
       if (!isSelected && !isTemp) return null;
+
+      // Special selection visuals for line/ruler: bold endpoint handles only
+      if ((type === "line" || type === "ruler") && points.length >= 2) {
+        const handleRadius = 6 / zoom;
+        const [p0, p1] = points;
+        return (
+          <g>
+            <circle
+              cx={p0.x}
+              cy={p0.y}
+              r={handleRadius}
+              fill={UI_COLORS.handle}
+              stroke={UI_COLORS.handleStroke}
+              strokeWidth={2 / zoom}
+              style={{ pointerEvents: "auto", cursor: "pointer" }}
+            />
+            <circle
+              cx={p1.x}
+              cy={p1.y}
+              r={handleRadius}
+              fill={UI_COLORS.handle}
+              stroke={UI_COLORS.handleStroke}
+              strokeWidth={2 / zoom}
+              style={{ pointerEvents: "auto", cursor: "pointer" }}
+            />
+          </g>
+        );
+      }
+
       const bounds = getAnnotationBounds(annotation);
       if (!bounds) return null;
       const padding = 5 / zoom;
@@ -751,26 +921,113 @@ const ImageCanvas = ({
       const midX = (minX + maxX) / 2;
       const midY = (minY + maxY) / 2;
 
-      const showResizeHandles = !isTemp && !annotation.locked && ["box", "ellipse", "text", "circle", "line", "ruler"].includes(type);
+      const showResizeHandles = !isTemp && !annotation.locked && ["box", "ellipse", "text", "circle"].includes(type);
 
       return (
         <g>
-          {!["angle", "circle"].includes(type) && (
-            <rect x={minX - padding} y={minY - padding} width={maxX - minX + padding * 2} height={maxY - minY + padding * 2} fill="none" stroke={isTemp ? color : UI_COLORS.selection} strokeWidth={isTemp ? 1 / zoom : 2 / zoom} strokeDasharray={`${4 / zoom} ${2 / zoom}`} opacity={isTemp ? 0.5 : 1} />
+          {/* For circle we do want a square dotted outline; for others use existing behavior */}
+          {type !== "angle" && (
+            <rect
+              x={minX - padding}
+              y={minY - padding}
+              width={maxX - minX + padding * 2}
+              height={maxY - minY + padding * 2}
+              fill="none"
+              stroke={isTemp ? color : UI_COLORS.selection}
+              strokeWidth={isTemp ? 1 / zoom : 2 / zoom}
+              strokeDasharray={`${4 / zoom} ${2 / zoom}`}
+              opacity={isTemp ? 0.5 : 1}
+            />
           )}
           {showResizeHandles && (
             <>
-              {/* Corner handles */}
-              <rect x={minX - handleSize / 2} y={minY - handleSize / 2} width={handleSize} height={handleSize} fill={UI_COLORS.handle} stroke={UI_COLORS.handleStroke} strokeWidth={1 / zoom} style={{ cursor: "nwse-resize", pointerEvents: "auto" }} />
-              <rect x={maxX - handleSize / 2} y={minY - handleSize / 2} width={handleSize} height={handleSize} fill={UI_COLORS.handle} stroke={UI_COLORS.handleStroke} strokeWidth={1 / zoom} style={{ cursor: "nesw-resize", pointerEvents: "auto" }} />
-              <rect x={minX - handleSize / 2} y={maxY - handleSize / 2} width={handleSize} height={handleSize} fill={UI_COLORS.handle} stroke={UI_COLORS.handleStroke} strokeWidth={1 / zoom} style={{ cursor: "nesw-resize", pointerEvents: "auto" }} />
-              <rect x={maxX - handleSize / 2} y={maxY - handleSize / 2} width={handleSize} height={handleSize} fill={UI_COLORS.handle} stroke={UI_COLORS.handleStroke} strokeWidth={1 / zoom} style={{ cursor: "nwse-resize", pointerEvents: "auto" }} />
+              {/* Corner handles (used by box, ellipse, text, circle) */}
+              <rect
+                x={minX - handleSize / 2}
+                y={minY - handleSize / 2}
+                width={handleSize}
+                height={handleSize}
+                fill={UI_COLORS.handle}
+                stroke={UI_COLORS.handleStroke}
+                strokeWidth={1 / zoom}
+                style={{ cursor: "nwse-resize", pointerEvents: "auto" }}
+              />
+              <rect
+                x={maxX - handleSize / 2}
+                y={minY - handleSize / 2}
+                width={handleSize}
+                height={handleSize}
+                fill={UI_COLORS.handle}
+                stroke={UI_COLORS.handleStroke}
+                strokeWidth={1 / zoom}
+                style={{ cursor: "nesw-resize", pointerEvents: "auto" }}
+              />
+              <rect
+                x={minX - handleSize / 2}
+                y={maxY - handleSize / 2}
+                width={handleSize}
+                height={handleSize}
+                fill={UI_COLORS.handle}
+                stroke={UI_COLORS.handleStroke}
+                strokeWidth={1 / zoom}
+                style={{ cursor: "nesw-resize", pointerEvents: "auto" }}
+              />
+              <rect
+                x={maxX - handleSize / 2}
+                y={maxY - handleSize / 2}
+                width={handleSize}
+                height={handleSize}
+                fill={UI_COLORS.handle}
+                stroke={UI_COLORS.handleStroke}
+                strokeWidth={1 / zoom}
+                style={{ cursor: "nwse-resize", pointerEvents: "auto" }}
+              />
 
-              {/* Edge handles */}
-              <rect x={midX - handleSize / 2} y={minY - handleSize / 2} width={handleSize} height={handleSize} fill={UI_COLORS.handle} stroke={UI_COLORS.handleStroke} strokeWidth={1 / zoom} style={{ cursor: "ns-resize", pointerEvents: "auto" }} />
-              <rect x={midX - handleSize / 2} y={maxY - handleSize / 2} width={handleSize} height={handleSize} fill={UI_COLORS.handle} stroke={UI_COLORS.handleStroke} strokeWidth={1 / zoom} style={{ cursor: "ns-resize", pointerEvents: "auto" }} />
-              <rect x={minX - handleSize / 2} y={midY - handleSize / 2} width={handleSize} height={handleSize} fill={UI_COLORS.handle} stroke={UI_COLORS.handleStroke} strokeWidth={1 / zoom} style={{ cursor: "ew-resize", pointerEvents: "auto" }} />
-              <rect x={maxX - handleSize / 2} y={midY - handleSize / 2} width={handleSize} height={handleSize} fill={UI_COLORS.handle} stroke={UI_COLORS.handleStroke} strokeWidth={1 / zoom} style={{ cursor: "ew-resize", pointerEvents: "auto" }} />
+              {/* Edge handles only for non-circle closed shapes */}
+              {type !== "circle" && (
+                <>
+                  <rect
+                    x={midX - handleSize / 2}
+                    y={minY - handleSize / 2}
+                    width={handleSize}
+                    height={handleSize}
+                    fill={UI_COLORS.handle}
+                    stroke={UI_COLORS.handleStroke}
+                    strokeWidth={1 / zoom}
+                    style={{ cursor: "ns-resize", pointerEvents: "auto" }}
+                  />
+                  <rect
+                    x={midX - handleSize / 2}
+                    y={maxY - handleSize / 2}
+                    width={handleSize}
+                    height={handleSize}
+                    fill={UI_COLORS.handle}
+                    stroke={UI_COLORS.handleStroke}
+                    strokeWidth={1 / zoom}
+                    style={{ cursor: "ns-resize", pointerEvents: "auto" }}
+                  />
+                  <rect
+                    x={minX - handleSize / 2}
+                    y={midY - handleSize / 2}
+                    width={handleSize}
+                    height={handleSize}
+                    fill={UI_COLORS.handle}
+                    stroke={UI_COLORS.handleStroke}
+                    strokeWidth={1 / zoom}
+                    style={{ cursor: "ew-resize", pointerEvents: "auto" }}
+                  />
+                  <rect
+                    x={maxX - handleSize / 2}
+                    y={midY - handleSize / 2}
+                    width={handleSize}
+                    height={handleSize}
+                    fill={UI_COLORS.handle}
+                    stroke={UI_COLORS.handleStroke}
+                    strokeWidth={1 / zoom}
+                    style={{ cursor: "ew-resize", pointerEvents: "auto" }}
+                  />
+                </>
+              )}
             </>
           )}
         </g>
@@ -798,7 +1055,16 @@ const ImageCanvas = ({
           <g key={id}>
             {renderSelectionHighlight()}
             {renderLabel()}
-            <rect x={Math.min(boxStart.x, boxEnd.x)} y={Math.min(boxStart.y, boxEnd.y)} width={Math.abs(boxEnd.x - boxStart.x)} height={Math.abs(boxEnd.y - boxStart.y)} stroke={color} strokeWidth={2 / zoom} fill={isSelected ? UI_COLORS.selectionBg : "none"} opacity={opacity} />
+            <rect
+              x={Math.min(boxStart.x, boxEnd.x)}
+              y={Math.min(boxStart.y, boxEnd.y)}
+              width={Math.abs(boxEnd.x - boxStart.x)}
+              height={Math.abs(boxEnd.y - boxStart.y)}
+              stroke={color}
+              strokeWidth={2 / zoom}
+              fill="none"
+              opacity={opacity}
+            />
           </g>
         );
       case "circle":
@@ -810,7 +1076,15 @@ const ImageCanvas = ({
           <g key={id}>
             {renderSelectionHighlight()}
             {renderLabel()}
-            <circle cx={cCx_r} cy={cCy_r} r={cR_r} stroke={color} strokeWidth={2 / zoom} fill={isSelected ? UI_COLORS.selectionBg : "none"} opacity={opacity} />
+            <circle
+              cx={cCx_r}
+              cy={cCy_r}
+              r={cR_r}
+              stroke={color}
+              strokeWidth={2 / zoom}
+              fill="none"
+              opacity={opacity}
+            />
           </g>
         );
       case "ellipse":
@@ -830,7 +1104,7 @@ const ImageCanvas = ({
               ry={eRy_r}
               stroke={color}
               strokeWidth={2 / zoom}
-              fill={isSelected ? UI_COLORS.selectionBg : "none"}
+              fill="none"
               opacity={opacity}
             />
           </g>
