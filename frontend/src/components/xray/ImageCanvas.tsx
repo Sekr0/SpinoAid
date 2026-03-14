@@ -1085,6 +1085,8 @@ const ImageCanvas = ({
               fill="none"
               opacity={opacity}
             />
+            {/* Center marker */}
+            <circle cx={cCx_r} cy={cCy_r} r={4 / zoom} fill={color} opacity={opacity} />
           </g>
         );
       case "ellipse":
@@ -1244,6 +1246,29 @@ const ImageCanvas = ({
           <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ overflow: "visible" }}>
             {annotations.map((ann) => renderAnnotation(ann))}
             {currentAnnotation && renderAnnotation(currentAnnotation, true)}
+
+            {/* Dotted line between Femoral head 1 and Femoral head 2 centers */}
+            {(() => {
+              const femoral1 = annotations.find((a) => a.type === "circle" && a.label === "Femoral head 1");
+              const femoral2 = annotations.find((a) => a.type === "circle" && a.label === "Femoral head 2");
+              if (!femoral1 || !femoral2 || femoral1.points.length < 2 || femoral2.points.length < 2) return null;
+              const cx1 = (femoral1.points[0].x + femoral1.points[1].x) / 2;
+              const cy1 = (femoral1.points[0].y + femoral1.points[1].y) / 2;
+              const cx2 = (femoral2.points[0].x + femoral2.points[1].x) / 2;
+              const cy2 = (femoral2.points[0].y + femoral2.points[1].y) / 2;
+              return (
+                <line
+                  x1={cx1}
+                  y1={cy1}
+                  x2={cx2}
+                  y2={cy2}
+                  stroke={ANNOTATION_COLORS.line}
+                  strokeWidth={2 / zoom}
+                  strokeDasharray={`${6 / zoom} ${4 / zoom}`}
+                  opacity={0.8}
+                />
+              );
+            })()}
 
             {/* Start point marker while drawing */}
             {isDrawing && currentAnnotation && currentAnnotation.points[0] && (
