@@ -10,6 +10,7 @@ from config import ALLOWED_ORIGINS
 from auth.routes import router as auth_router
 from patients.routes import router as patients_router
 from annotations.routes import router as annotations_router
+from routes.femoral import router as femoral_router
 
 app = FastAPI(
     title="SpinoAid API",
@@ -30,6 +31,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(patients_router)
 app.include_router(annotations_router)
+app.include_router(femoral_router)
 
 
 # ============= Health =============

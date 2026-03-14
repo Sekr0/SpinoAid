@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { ArrowLeft, Moon, Sun } from "lucide-react";
+import { ArrowLeft, Moon, Sun, Loader2 } from "lucide-react";
 import { AnnotationToolbar, type AnnotationTool } from "@/components/xray/AnnotationToolbar";
 import { ImageCanvas, type Annotation } from "@/components/xray/ImageCanvas";
 import { ImageAdjustments } from "@/components/xray/ImageAdjustments";
@@ -9,7 +9,7 @@ import { AnnotationList } from "@/components/xray/AnnotationList";
 import { MedicalButton } from "@/components/medical/MedicalButton";
 import { useTheme } from "@/components/ThemeProvider";
 import { toast } from "@/hooks/use-toast";
-import { annotationsApi } from "@/services/api";
+import { annotationsApi, autoAnnotateApi } from "@/services/api";
 
 const XRayAnnotation = () => {
   const navigate = useNavigate();
@@ -71,6 +71,9 @@ const XRayAnnotation = () => {
     gamma: 100,
     invert: false,
   });
+
+  // Femoral detection state
+  const [isDetecting, setIsDetecting] = useState(false);
 
   const resetFilters = useCallback(() => {
     setFilters({
@@ -346,6 +349,99 @@ const XRayAnnotation = () => {
     setIsPanning((prev) => !prev);
   }, []);
 
+  // Auto Annotate: call femoral + endplates APIs and plot circles/lines
+  const handleAutoAnnotate = useCallback(async () => {
+    if (!imageSrc) {
+      toast({
+        title: "No image",
+        description: "Please upload an X-ray image first.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsDetecting(true);
+    try {
+      // Get image dimensions for coordinate scaling
+      const img = new Image();
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = reject;
+        img.src = imageSrc;
+      });
+      const imgW = img.naturalWidth;
+      const imgH = img.naturalHeight;
+
+      // Call both APIs in parallel
+      const [femoralHeads, endplatesResult] = await Promise.all([
+        autoAnnotateApi.femoralHeads(imageSrc),
+        autoAnnotateApi.endplates(imageSrc),
+      ]);
+
+      const newAnnotations: Annotation[] = [];
+      const ts = Date.now();
+
+      // Femoral heads → circle annotations (points = bounding box corners)
+      femoralHeads.forEach((head: { cx: number; cy: number; rx: number; ry: number }, idx: number) => {
+        const r = (head.rx + head.ry) / 2;
+        newAnnotations.push({
+          id: `auto_femoral_${ts}_${idx}`,
+          type: "circle",
+          points: [
+            { x: head.cx - r, y: head.cy - r },
+            { x: head.cx + r, y: head.cy + r },
+          ],
+          color: "#3b82f6",
+          label: `Femoral head ${idx + 1}`,
+        });
+      });
+
+      // Endplates → line annotations; scale if API image size differs
+      const apiShape = endplatesResult.image_shape;
+      const scaleX = apiShape ? imgW / apiShape.width : 1;
+      const scaleY = apiShape ? imgH / apiShape.height : 1;
+
+      (endplatesResult.endplates || [])
+        .filter((ep: { detected?: boolean }) => ep.detected !== false)
+        .forEach((ep: { label: string; x1: number; y1: number; x2: number; y2: number }, idx: number) => {
+          const x1 = ep.x1 * scaleX;
+          const y1 = ep.y1 * scaleY;
+          const x2 = ep.x2 * scaleX;
+          const y2 = ep.y2 * scaleY;
+          newAnnotations.push({
+            id: `auto_endplate_${ts}_${idx}`,
+            type: "line",
+            points: [{ x: x1, y: y1 }, { x: x2, y: y2 }],
+            color: "#f59e0b",
+            label: ep.label,
+          });
+        });
+
+      if (newAnnotations.length > 0) {
+        handleAnnotationsChange([...annotations, ...newAnnotations]);
+        toast({
+          title: "Auto Annotate complete",
+          description: `Added ${femoralHeads.length} femoral head(s) and ${(endplatesResult.endplates || []).filter((e: any) => e.detected !== false).length} endplate line(s).`,
+        });
+      } else {
+        toast({
+          title: "No detections",
+          description: "No femoral heads or endplates detected in this image.",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error("Auto annotate error:", error);
+      toast({
+        title: "Auto Annotate error",
+        description: "Could not reach the detection APIs. Check your connection or try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsDetecting(false);
+    }
+  }, [imageSrc, annotations, handleAnnotationsChange]);
+
   return (
     <div className="h-screen bg-background flex flex-col overflow-hidden">
       {/* Header */}
@@ -473,9 +569,9 @@ const XRayAnnotation = () => {
         </aside>
       </div>
 
-      {/* Status Bar */}
-      <footer className="h-8 border-t border-border bg-card flex items-center justify-between px-4 text-xs text-muted-foreground shrink-0">
-        <div className="flex items-center gap-4">
+      {/* Status Bar + Auto Annotate */}
+      <footer className="h-10 border-t border-border bg-card flex items-center justify-between px-4 text-xs text-muted-foreground shrink-0 gap-4">
+        <div className="flex items-center gap-4 min-w-0">
           <span>
             Tool: <strong className="text-foreground">{activeTool}</strong>
           </span>
@@ -484,10 +580,28 @@ const XRayAnnotation = () => {
             <span className="text-primary">Shape selected (Delete to remove)</span>
           )}
         </div>
-        <div className="flex items-center gap-4">
-          <span>
+        <div className="flex items-center gap-4 shrink-0">
+          <span className="hidden lg:inline">
             Shortcuts: V=Select, P=Marker, B=Box, C=Circle, O=Ellipse, A=Angle, Space=Pan
           </span>
+          {imageSrc && (
+            <MedicalButton
+              variant="primary"
+              size="sm"
+              onClick={handleAutoAnnotate}
+              disabled={isDetecting}
+              className="shrink-0"
+            >
+              {isDetecting ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                  Auto Annotating...
+                </>
+              ) : (
+                "Auto Annotate"
+              )}
+            </MedicalButton>
+          )}
         </div>
       </footer>
     </div>
