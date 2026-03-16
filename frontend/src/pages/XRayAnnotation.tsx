@@ -126,116 +126,167 @@ const computeDerivedAnnotations = (baseAnnotations: Annotation[]): Annotation[] 
     const l1p1 = l1Annotation.points[0];
     const l1p2 = l1Annotation.points[1];
 
-    // Ensure points are ordered left to right for consistency in "extending to the right"
-    const s1L = s1p1.x < s1p2.x ? s1p1 : s1p2;
-    const s1R = s1p1.x < s1p2.x ? s1p2 : s1p1;
-    
-    const l1L = l1p1.x < l1p2.x ? l1p1 : l1p2;
-    const l1R = l1p1.x < l1p2.x ? l1p2 : l1p1;
+    const L1mid = { x: (l1p1.x + l1p2.x) / 2, y: (l1p1.y + l1p2.y) / 2 };
+    const S1mid = { x: (s1p1.x + s1p2.x) / 2, y: (s1p1.y + s1p2.y) / 2 };
 
-    // Vectors representing the endplates
-    const vS1 = { x: s1R.x - s1L.x, y: s1R.y - s1L.y };
-    const vL1 = { x: l1R.x - l1L.x, y: l1R.y - l1L.y };
-
-    const lenS1 = Math.hypot(vS1.x, vS1.y) || 1;
-    const lenL1 = Math.hypot(vL1.x, vL1.y) || 1;
-
-    // Extend lines to the right
-    const EXTENSION = 200;
-    
-    const extS1 = { 
-      x: s1R.x + (vS1.x / lenS1) * EXTENSION, 
-      y: s1R.y + (vS1.y / lenS1) * EXTENSION 
+    // Function to get upward pointing perpendicular unit vector
+    const perpUp = (pa: {x: number, y: number}, pb: {x: number, y: number}) => {
+      const dx = pb.x - pa.x;
+      const dy = pb.y - pa.y;
+      const mag = Math.sqrt(dx * dx + dy * dy) || 1;
+      let nx = -dy / mag;
+      let ny = dx / mag;
+      if (ny > 0) { nx = -nx; ny = -ny; } // flip to point up (−y)
+      return { x: nx, y: ny };
     };
 
-    const extL1 = { 
-      x: l1R.x + (vL1.x / lenL1) * EXTENSION, 
-      y: l1R.y + (vL1.y / lenL1) * EXTENSION 
+    const L1perp = perpUp(l1p1, l1p2);
+    const S1perp = perpUp(s1p1, s1p2);
+
+    // ── Endplate extensions (dashed, along the endplate line) ─────────
+    const extendLine = (p1: {x: number, y: number}, p2: {x: number, y: number}, length: number) => {
+      const dx = p2.x - p1.x;
+      const dy = p2.y - p1.y;
+      const mag = Math.sqrt(dx * dx + dy * dy) || 1;
+      const ux = dx / mag;
+      const uy = dy / mag;
+      return [
+        { x: p1.x - ux * length, y: p1.y - uy * length },
+        { x: p2.x + ux * length, y: p2.y + uy * length },
+      ];
     };
 
-    // Draw dotted extension lines (dashed rendering added in ImageCanvas)
+    const L1ext = extendLine(l1p1, l1p2, 1200);
+    const S1ext = extendLine(s1p1, s1p2, 1200);
+
+    // Add extensions for visualization
     derived.push({
-      id: `derived_line_s1_ext`,
+      id: `derived_line_l1_ext1`,
       type: "line",
-      points: [s1R, extS1],
-      color: "#10b981", // Emerald
+      points: [L1ext[0], l1p1],
+      color: "#fde047", // yellow-ish
+      label: "L1 Ext",
+      locked: true,
+      hidden: false,
+      isDashed: true
+    });
+    derived.push({
+      id: `derived_line_l1_ext2`,
+      type: "line",
+      points: [l1p2, L1ext[1]],
+      color: "#fde047",
+      label: "L1 Ext",
+      locked: true,
+      hidden: false,
+      isDashed: true
+    });
+    derived.push({
+      id: `derived_line_s1_ext1`,
+      type: "line",
+      points: [S1ext[0], s1p1],
+      color: "#22d3ee", // cyan-ish
       label: "S1 Ext",
       locked: true,
       hidden: false,
       isDashed: true
     });
     derived.push({
-      id: `derived_line_l1_ext`,
+      id: `derived_line_s1_ext2`,
       type: "line",
-      points: [l1R, extL1],
-      color: "#10b981",
-      label: "L1 Ext",
+      points: [s1p2, S1ext[1]],
+      color: "#22d3ee",
+      label: "S1 Ext",
       locked: true,
       hidden: false,
       isDashed: true
     });
 
-    // Drop perpendiculars
-    // S1 perpendicular (going UP -> dy < 0)
-    // V = (vS1.y, -vS1.x)
-    const pS1dx = vS1.y / lenS1;
-    const pS1dy = -vS1.x / lenS1; 
-    
-    // L1 perpendicular (going DOWN -> dy > 0)
-    // V = (-vL1.y, vL1.x)
-    const pL1dx = -vL1.y / lenL1;
-    const pL1dy = vL1.x / lenL1;
+    // ── Perpendicular lines from midpoints upward ─────────────────────
+    const PERP_LEN = 600;
+    const L1perpA = { x: L1mid.x + L1perp.x * PERP_LEN, y: L1mid.y + L1perp.y * PERP_LEN };
+    const L1perpB = { x: L1mid.x - L1perp.x * PERP_LEN, y: L1mid.y - L1perp.y * PERP_LEN };
+    const S1perpA = { x: S1mid.x + S1perp.x * PERP_LEN, y: S1mid.y + S1perp.y * PERP_LEN };
+    const S1perpB = { x: S1mid.x - S1perp.x * PERP_LEN, y: S1mid.y - S1perp.y * PERP_LEN };
 
-    const ptS1Start = { x: extS1.x, y: extS1.y };
-    const ptL1Start = { x: extL1.x, y: extL1.y };
+    derived.push({
+      id: `derived_line_l1_perp`,
+      type: "line",
+      points: [L1perpB, L1perpA],
+      color: "#fde047",
+      label: "L1 Perp",
+      locked: true,
+      hidden: false,
+      isDashed: true
+    });
+    derived.push({
+      id: `derived_line_s1_perp`,
+      type: "line",
+      points: [S1perpB, S1perpA],
+      color: "#22d3ee",
+      label: "S1 Perp",
+      locked: true,
+      hidden: false,
+      isDashed: true
+    });
 
-    // Line intersection math:
-    // P1 + t1 * V1 = P2 + t2 * V2
-    const dx = ptL1Start.x - ptS1Start.x;
-    const dy = ptL1Start.y - ptS1Start.y;
-    
-    const det = -pS1dx * pL1dy + pS1dy * pL1dx;
-
-    if (Math.abs(det) > 0.0001) {
-      const t1 = (-dx * pL1dy + dy * pL1dx) / det;
-      
-      const intersectPoint = {
-        x: ptS1Start.x + t1 * pS1dx,
-        y: ptS1Start.y + t1 * pS1dy
+    // ── Intersection of the two perpendicular lines ───────────────────
+    const lineIntersection = (p1: any, p2: any, p3: any, p4: any) => {
+      const A1 = p2.y - p1.y;
+      const B1 = p1.x - p2.x;
+      const C1 = A1 * p1.x + B1 * p1.y;
+      const A2 = p4.y - p3.y;
+      const B2 = p3.x - p4.x;
+      const C2 = A2 * p3.x + B2 * p3.y;
+      const det = A1 * B2 - A2 * B1;
+      if (Math.abs(det) < 1e-10) return null;
+      return {
+        x: (B2 * C1 - B1 * C2) / det,
+        y: (A1 * C2 - A2 * C1) / det,
       };
+    };
 
-      // Ensure we draw the acute angle instead of the obtuse one
-      let ptL1Angle = ptL1Start;
-      const ptS1Angle = ptS1Start;
+    const L1far = { x: L1mid.x + L1perp.x * 9999, y: L1mid.y + L1perp.y * 9999 };
+    const S1far = { x: S1mid.x + S1perp.x * 9999, y: S1mid.y + S1perp.y * 9999 };
+    const perpInter = lineIntersection(L1mid, L1far, S1mid, S1far);
 
-      const vA = { x: ptL1Angle.x - intersectPoint.x, y: ptL1Angle.y - intersectPoint.y };
-      const vB = { x: ptS1Angle.x - intersectPoint.x, y: ptS1Angle.y - intersectPoint.y };
+    if (perpInter) {
+      // Create a visual angle structure compatible with the current draw logic.
+      // ImageCanvas 'angle' expects: [arm1_end, vertex, arm2_end]
+      // We will point them perfectly so the arc calculates the acute Cobb angle.
+      
+      const ptL1Angle = { x: perpInter.x - L1perp.x * 100, y: perpInter.y - L1perp.y * 100 };
+      const ptS1Angle = { x: perpInter.x - S1perp.x * 100, y: perpInter.y - S1perp.y * 100 };
 
-      // If dot product is negative, angle is > 90 (obtuse)
+      // Ensure we draw the acute angle (if dot < 0, angle > 90)
+      const vA = { x: ptL1Angle.x - perpInter.x, y: ptL1Angle.y - perpInter.y };
+      const vB = { x: ptS1Angle.x - perpInter.x, y: ptS1Angle.y - perpInter.y };
+      let drawPtL1 = ptL1Angle;
+      
       if (vA.x * vB.x + vA.y * vB.y < 0) {
-        // Flip the L1 arm across the intersection to capture the acute angle
-        ptL1Angle = {
-          x: intersectPoint.x - vA.x,
-          y: intersectPoint.y - vA.y
+        drawPtL1 = {
+          x: perpInter.x - vA.x,
+          y: perpInter.y - vA.y
         };
       }
 
       derived.push({
         id: `derived_angle_ll`,
         type: "angle",
-        points: [ptL1Angle, intersectPoint, ptS1Angle],
-        color: "#10b981",
+        points: [drawPtL1, perpInter, ptS1Angle],
+        color: "#a78bfa",
         label: "LL",
         locked: true,
-        isDashed: true // Renders the arms of the angle dashed
+        hideFirstLine: true, // we don't need solid line arms, just the arc
+        hideSecondLine: true,
+        hidden: false
       });
 
-      const llTextPos = { x: intersectPoint.x + 80, y: intersectPoint.y };
+      const llTextPos = { x: perpInter.x + 40, y: perpInter.y };
       derived.push({
         id: `derived_text_ll`,
         type: "text",
         points: [llTextPos, { x: llTextPos.x + 80, y: llTextPos.y + 40 }],
-        color: "#10b981",
+        color: "#a78bfa",
         label: "LL Text",
         text: "LL",
         locked: true,

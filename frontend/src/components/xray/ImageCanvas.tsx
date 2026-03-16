@@ -14,6 +14,7 @@ interface Annotation {
   hideAngle?: boolean;
   hidden?: boolean;
   hideFirstLine?: boolean;
+  hideSecondLine?: boolean;
   isDashed?: boolean;
 }
 
@@ -1207,15 +1208,17 @@ const ImageCanvas = ({
             )}
             {points.length >= 3 && (
               <g>
-                <line 
-                  x1={points[1].x} 
-                  y1={points[1].y} 
-                  x2={points[2].x} 
-                  y2={points[2].y} 
-                  stroke={color} 
-                  strokeWidth={2 / zoom} 
-                  strokeDasharray={annotation.isDashed ? `${6 / zoom} ${6 / zoom}` : undefined}
-                />
+                {!annotation.hideSecondLine && (
+                  <line 
+                    x1={points[1].x} 
+                    y1={points[1].y} 
+                    x2={points[2].x} 
+                    y2={points[2].y} 
+                    stroke={color} 
+                    strokeWidth={2 / zoom} 
+                    strokeDasharray={annotation.isDashed ? `${6 / zoom} ${6 / zoom}` : undefined}
+                  />
+                )}
                 {renderAngleArc()}
                 <rect x={points[1].x + 20 / zoom} y={points[1].y - 25 / zoom} width={45 / zoom} height={18 / zoom} fill="rgba(0,0,0,0.8)" rx={3 / zoom} />
                 <text x={points[1].x + 42 / zoom} y={points[1].y - 12 / zoom} fill="white" fontSize={12 / zoom} textAnchor="middle" fontFamily="monospace" fontWeight="bold">{ang.toFixed(1)}°</text>
