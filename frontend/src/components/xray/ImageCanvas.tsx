@@ -870,6 +870,7 @@ const ImageCanvas = ({
     if (!annotation) return null;
     if (annotation.hidden) return null;
     if (!showAngles && annotation.type === "angle") return null;
+    if (!showAngles && annotation.id.startsWith("derived_text_")) return null;
 
     const { id, type, points, color, text, label } = annotation;
     const opacity = isTemp ? 0.7 : 1;
