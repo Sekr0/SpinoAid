@@ -397,23 +397,25 @@ const XRayAnnotation = () => {
       });
 
       // Endplates → line annotations; scale if API image size differs
-      const apiShape = endplatesResult.image_shape;
-      const scaleX = apiShape ? imgW / apiShape.width : 1;
-      const scaleY = apiShape ? imgH / apiShape.height : 1;
+      const apiWidth = endplatesResult.image_shape?.width || (endplatesResult as any).image_width;
+      const apiHeight = endplatesResult.image_shape?.height || (endplatesResult as any).image_height;
+      const scaleX = apiWidth ? imgW / apiWidth : 1;
+      const scaleY = apiHeight ? imgH / apiHeight : 1;
 
       (endplatesResult.endplates || [])
         .filter((ep: { detected?: boolean }) => ep.detected !== false)
-        .forEach((ep: { label: string; x1: number; y1: number; x2: number; y2: number }, idx: number) => {
+        .forEach((ep: { label: string; endplate?: string; x1: number; y1: number; x2: number; y2: number }, idx: number) => {
           const x1 = ep.x1 * scaleX;
           const y1 = ep.y1 * scaleY;
           const x2 = ep.x2 * scaleX;
           const y2 = ep.y2 * scaleY;
+          const labelText = ep.endplate ? `${ep.label} - ${ep.endplate}` : ep.label;
           newAnnotations.push({
             id: `auto_endplate_${ts}_${idx}`,
             type: "line",
             points: [{ x: x1, y: y1 }, { x: x2, y: y2 }],
             color: "#f59e0b",
-            label: ep.label,
+            label: labelText,
           });
         });
 

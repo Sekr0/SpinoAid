@@ -348,7 +348,7 @@ export const uploadImage = async (file: File) => {
 // ============= Auto Annotate APIs (HF Spaces) =============
 
 const FEMORAL_API = "https://sam9198-femoral-head-detection.hf.space";
-const ENDPLATES_API = "https://sam9198-vertebral-endplates-detection.hf.space";
+const ENDPLATES_API = "https://sam9198-vertebral-endplate-detection.hf.space";
 
 /** Fetch blob from data URL */
 const dataUrlToBlob = async (dataUrl: string): Promise<Blob> => {
@@ -461,16 +461,19 @@ export interface FemoralHeadResult {
 
 export interface EndplateResult {
   label: string;
+  endplate?: string;
   x1: number;
   y1: number;
   x2: number;
   y2: number;
-  detected: boolean;
+  detected?: boolean;
 }
 
 export interface EndplatesApiResponse {
   confidence?: number;
   image_shape?: { height: number; width: number };
+  image_width?: number;
+  image_height?: number;
   endplates: EndplateResult[];
 }
 
