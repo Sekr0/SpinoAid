@@ -14,7 +14,7 @@ interface Annotation {
   hideAngle?: boolean;
   hidden?: boolean;
   hideFirstLine?: boolean;
-  hideSecondLine?: boolean;
+  hideLines?: boolean;
   isDashed?: boolean;
 }
 
@@ -1195,7 +1195,7 @@ const ImageCanvas = ({
           <g key={id} opacity={opacity}>
             {renderSelectionHighlight()}
             {renderLabel()}
-            {!annotation.hideFirstLine && (
+            {!annotation.hideLines && !annotation.hideFirstLine && (
               <line 
                 x1={points[0].x} 
                 y1={points[0].y} 
@@ -1208,7 +1208,7 @@ const ImageCanvas = ({
             )}
             {points.length >= 3 && (
               <g>
-                {!annotation.hideSecondLine && (
+                {!annotation.hideLines && (
                   <line 
                     x1={points[1].x} 
                     y1={points[1].y} 

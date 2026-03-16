@@ -140,9 +140,12 @@ const computeDerivedAnnotations = (baseAnnotations: Annotation[]): Annotation[] 
     const lenS1 = Math.hypot(vS1.x, vS1.y) || 1;
     const lenL1 = Math.hypot(vL1.x, vL1.y) || 1;
 
-    // Extend lines to the right
-    const EXTENSION = 200;
+    // Extend lines FAR to the right to ensure they cross visually if they converge
+    const EXTENSION = 2000;
     
+    // We extend from the rightmost points (s1R, l1R)
+    // To go right, the x component must be positive.
+    // vS1 and vL1 were defined as R - L, so their x component is already positive!
     const extS1 = { 
       x: s1R.x + (vS1.x / lenS1) * EXTENSION, 
       y: s1R.y + (vS1.y / lenS1) * EXTENSION 
@@ -153,79 +156,58 @@ const computeDerivedAnnotations = (baseAnnotations: Annotation[]): Annotation[] 
       y: l1R.y + (vL1.y / lenL1) * EXTENSION 
     };
 
-    // Draw dotted extension lines (dashed rendering added in ImageCanvas)
-    derived.push({
-      id: `derived_line_s1_ext`,
-      type: "line",
-      points: [s1R, extS1],
-      color: "#10b981", // Emerald
-      label: "S1 Ext",
-      locked: true,
-      hidden: false,
-      isDashed: true
-    });
-    derived.push({
-      id: `derived_line_l1_ext`,
-      type: "line",
-      points: [l1R, extL1],
-      color: "#10b981",
-      label: "L1 Ext",
-      locked: true,
-      hidden: false,
-      isDashed: true
-    });
+    // Calculate intersection of the two endplate lines mathematically
+    const dx1 = vL1.x; // l1R.x - l1L.x
+    const dy1 = vL1.y; // l1R.y - l1L.y
+    const dx2 = vS1.x; // s1R.x - s1L.x
+    const dy2 = vS1.y; // s1R.y - s1L.y
 
-    // Drop perpendiculars
-    // Both endplates are generally horizontal, mostly tilting slightly left or right.
-    // L1 to S1 vector is roughly: vS1 = (x > 0, y ~ 0) after our L/R sorting.
-    // The strict normal (rotated 90 deg) is (-v.y, v.x). Let's force the Y direction.
-    
-    // S1 perpendicular must go UP, so dy must be negative in SVG coordinates
-    let pS1dx = -vS1.y / lenS1;
-    let pS1dy = vS1.x / lenS1;
-    if (pS1dy > 0) {
-      pS1dx = -pS1dx;
-      pS1dy = -pS1dy;
-    }
-    
-    // L1 perpendicular must go DOWN, so dy must be positive in SVG coordinates
-    let pL1dx = -vL1.y / lenL1;
-    let pL1dy = vL1.x / lenL1;
-    if (pL1dy < 0) {
-      pL1dx = -pL1dx;
-      pL1dy = -pL1dy;
-    }
-
-    // We need to trace these perpendicular lines from the endplates to find their intersection.
-    // Start them from the right edge of each endplate
-    const ptS1Start = { x: s1R.x, y: s1R.y };
-    const ptL1Start = { x: l1R.x, y: l1R.y };
-
-    // Line intersection math:
-    // P1 + t1 * V1 = P2 + t2 * V2
-    const dx = ptL1Start.x - ptS1Start.x;
-    const dy = ptL1Start.y - ptS1Start.y;
-    
-    const det = -pS1dx * pL1dy + pS1dy * pL1dx;
+    const det = dx1 * dy2 - dy1 * dx2;
 
     if (Math.abs(det) > 0.0001) {
-      const t1 = (-dx * pL1dy + dy * pL1dx) / det;
+      // Find intersection point 
+      const dx3 = l1R.x - s1R.x;
+      const dy3 = l1R.y - s1R.y;
       
+      const t1 = (dx3 * dy2 - dy3 * dx2) / det;
       const intersectPoint = {
-        x: ptS1Start.x + t1 * pS1dx,
-        y: ptS1Start.y + t1 * pS1dy
+        x: l1R.x - t1 * dx1,
+        y: l1R.y - t1 * dy1
       };
 
-      // Ensure we draw the acute angle instead of the obtuse one
-      let ptL1Angle = ptL1Start;
-      const ptS1Angle = ptS1Start;
+      // We draw dashed extensions from the endplates to the intersection explicitly
+      // However, if they don't visually cross (intersect on the left), we still 
+      // just draw them out to the intersection point as requested, so the angle is formed.
+      derived.push({
+        id: `derived_line_l1_ext`,
+        type: "line",
+        points: [l1R, intersectPoint],
+        color: "#10b981", // Emerald
+        label: "L1 Ext",
+        locked: true,
+        hidden: false,
+        isDashed: true
+      });
+
+      derived.push({
+        id: `derived_line_s1_ext`,
+        type: "line",
+        points: [s1R, intersectPoint],
+        color: "#10b981",
+        label: "S1 Ext",
+        locked: true,
+        hidden: false,
+        isDashed: true
+      });
+
+      // Ensure we draw the acute angle at the intersection using hideLines!
+      let ptL1Angle = l1R;
+      const ptS1Angle = s1R;
 
       const vA = { x: ptL1Angle.x - intersectPoint.x, y: ptL1Angle.y - intersectPoint.y };
       const vB = { x: ptS1Angle.x - intersectPoint.x, y: ptS1Angle.y - intersectPoint.y };
 
-      // If dot product is negative, angle is > 90 (obtuse)
       if (vA.x * vB.x + vA.y * vB.y < 0) {
-        // Flip the L1 arm across the intersection to capture the acute angle
         ptL1Angle = {
           x: intersectPoint.x - vA.x,
           y: intersectPoint.y - vA.y
@@ -239,7 +221,7 @@ const computeDerivedAnnotations = (baseAnnotations: Annotation[]): Annotation[] 
         color: "#10b981",
         label: "LL",
         locked: true,
-        isDashed: true // Renders the arms of the angle dashed
+        hideLines: true // DO NOT draw angle lines over our extensions
       });
 
       const llTextPos = { x: intersectPoint.x + 80, y: intersectPoint.y };
