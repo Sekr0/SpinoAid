@@ -117,6 +117,112 @@ const computeDerivedAnnotations = (baseAnnotations: Annotation[]): Annotation[] 
     });
   }
 
+  // 3. Identify L1 Superior Endplate for Lumbar Lordosis (LL)
+  const l1Annotation = baseAnnotations.find((a) => a.label === "L1" || a.label === "L1 - Superior");
+  if (s1Annotation && s1Annotation.points.length >= 2 && l1Annotation && l1Annotation.points.length >= 2) {
+    const s1p1 = s1Annotation.points[0];
+    const s1p2 = s1Annotation.points[1];
+    
+    const l1p1 = l1Annotation.points[0];
+    const l1p2 = l1Annotation.points[1];
+
+    // Ensure points are ordered left to right for consistency in "extending to the right"
+    const s1L = s1p1.x < s1p2.x ? s1p1 : s1p2;
+    const s1R = s1p1.x < s1p2.x ? s1p2 : s1p1;
+    
+    const l1L = l1p1.x < l1p2.x ? l1p1 : l1p2;
+    const l1R = l1p1.x < l1p2.x ? l1p2 : l1p1;
+
+    // Vectors representing the endplates
+    const vS1 = { x: s1R.x - s1L.x, y: s1R.y - s1L.y };
+    const vL1 = { x: l1R.x - l1L.x, y: l1R.y - l1L.y };
+
+    // Extend lines to the right by a significant amount (e.g., 400px)
+    const EXTENSION = 400;
+    
+    const lenS1 = Math.hypot(vS1.x, vS1.y) || 1;
+    const extS1 = { 
+      x: s1R.x + (vS1.x / lenS1) * EXTENSION, 
+      y: s1R.y + (vS1.y / lenS1) * EXTENSION 
+    };
+
+    const lenL1 = Math.hypot(vL1.x, vL1.y) || 1;
+    const extL1 = { 
+      x: l1R.x + (vL1.x / lenL1) * EXTENSION, 
+      y: l1R.y + (vL1.y / lenL1) * EXTENSION 
+    };
+
+    // Draw dotted extension lines
+    derived.push({
+      id: `derived_line_s1_ext`,
+      type: "freehand", // using freehand to just raw draw a line, but ImageCanvas line might be better
+      points: [s1R, extS1],
+      color: "#f59e0b",
+      label: "S1 Ext",
+      locked: true,
+      hidden: false,
+    });
+    derived.push({
+      id: `derived_line_l1_ext`,
+      type: "freehand",
+      points: [l1R, extL1],
+      color: "#f59e0b",
+      label: "L1 Ext",
+      locked: true,
+      hidden: false,
+    });
+
+    // Drop perpendiculars
+    // S1 perpendicular (going UP from the extended line)
+    const pS1dx = -vS1.y / lenS1;
+    const pS1dy = vS1.x / lenS1;
+    
+    // L1 perpendicular (going DOWN from the extended line)
+    const pL1dx = vL1.y / lenL1;
+    const pL1dy = -vL1.x / lenL1;
+
+    // We need to trace these perpendicular lines from some point on the extended lines to find their intersection.
+    // Let's drop them from the end of the extended lines for visual clarity
+    const ptS1Start = { x: extS1.x, y: extS1.y };
+    const ptL1Start = { x: extL1.x, y: extL1.y };
+
+    // Line intersection math:
+    // L1: p1 + t1 * d1  => ptS1Start + t1 * (pS1dx, pS1dy)
+    // L2: p2 + t2 * d2  => ptL1Start + t2 * (pL1dx, pL1dy)
+    // Cross product approach
+    const dx = ptL1Start.x - ptS1Start.x;
+    const dy = ptL1Start.y - ptS1Start.y;
+    const det = pL1dx * pS1dy - pL1dy * pS1dx;
+
+    if (Math.abs(det) > 0.0001) {
+      const t1 = (dx * pL1dy - dy * pL1dx) / det;
+      const intersectPoint = {
+        x: ptS1Start.x + t1 * pS1dx,
+        y: ptS1Start.y + t1 * pS1dy
+      };
+
+      derived.push({
+        id: `derived_angle_ll`,
+        type: "angle",
+        points: [ptL1Start, intersectPoint, ptS1Start],
+        color: "#10b981", // Emerald 500
+        label: "LL",
+        locked: true,
+      });
+
+      const llTextPos = { x: intersectPoint.x + 80, y: intersectPoint.y };
+      derived.push({
+        id: `derived_text_ll`,
+        type: "text",
+        points: [llTextPos, { x: llTextPos.x + 80, y: llTextPos.y + 40 }],
+        color: "#10b981",
+        label: "LL Text",
+        text: "LL",
+        locked: true,
+      });
+    }
+  }
+
 
   return derived;
 };
