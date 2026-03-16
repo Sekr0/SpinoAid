@@ -137,77 +137,97 @@ const computeDerivedAnnotations = (baseAnnotations: Annotation[]): Annotation[] 
     const vS1 = { x: s1R.x - s1L.x, y: s1R.y - s1L.y };
     const vL1 = { x: l1R.x - l1L.x, y: l1R.y - l1L.y };
 
-    // Extend lines to the right by a significant amount (e.g., 400px)
-    const EXTENSION = 400;
-    
     const lenS1 = Math.hypot(vS1.x, vS1.y) || 1;
+    const lenL1 = Math.hypot(vL1.x, vL1.y) || 1;
+
+    // Extend lines to the right
+    const EXTENSION = 200;
+    
     const extS1 = { 
       x: s1R.x + (vS1.x / lenS1) * EXTENSION, 
       y: s1R.y + (vS1.y / lenS1) * EXTENSION 
     };
 
-    const lenL1 = Math.hypot(vL1.x, vL1.y) || 1;
     const extL1 = { 
       x: l1R.x + (vL1.x / lenL1) * EXTENSION, 
       y: l1R.y + (vL1.y / lenL1) * EXTENSION 
     };
 
-    // Draw dotted extension lines
+    // Draw dotted extension lines (dashed rendering added in ImageCanvas)
     derived.push({
       id: `derived_line_s1_ext`,
-      type: "freehand", // using freehand to just raw draw a line, but ImageCanvas line might be better
+      type: "line",
       points: [s1R, extS1],
-      color: "#f59e0b",
+      color: "#10b981", // Emerald
       label: "S1 Ext",
       locked: true,
       hidden: false,
+      isDashed: true
     });
     derived.push({
       id: `derived_line_l1_ext`,
-      type: "freehand",
+      type: "line",
       points: [l1R, extL1],
-      color: "#f59e0b",
+      color: "#10b981",
       label: "L1 Ext",
       locked: true,
       hidden: false,
+      isDashed: true
     });
 
     // Drop perpendiculars
-    // S1 perpendicular (going UP from the extended line)
-    const pS1dx = -vS1.y / lenS1;
-    const pS1dy = vS1.x / lenS1;
+    // S1 perpendicular (going UP -> dy < 0)
+    // V = (vS1.y, -vS1.x)
+    const pS1dx = vS1.y / lenS1;
+    const pS1dy = -vS1.x / lenS1; 
     
-    // L1 perpendicular (going DOWN from the extended line)
-    const pL1dx = vL1.y / lenL1;
-    const pL1dy = -vL1.x / lenL1;
+    // L1 perpendicular (going DOWN -> dy > 0)
+    // V = (-vL1.y, vL1.x)
+    const pL1dx = -vL1.y / lenL1;
+    const pL1dy = vL1.x / lenL1;
 
-    // We need to trace these perpendicular lines from some point on the extended lines to find their intersection.
-    // Let's drop them from the end of the extended lines for visual clarity
     const ptS1Start = { x: extS1.x, y: extS1.y };
     const ptL1Start = { x: extL1.x, y: extL1.y };
 
     // Line intersection math:
-    // L1: p1 + t1 * d1  => ptS1Start + t1 * (pS1dx, pS1dy)
-    // L2: p2 + t2 * d2  => ptL1Start + t2 * (pL1dx, pL1dy)
-    // Cross product approach
+    // P1 + t1 * V1 = P2 + t2 * V2
     const dx = ptL1Start.x - ptS1Start.x;
     const dy = ptL1Start.y - ptS1Start.y;
-    const det = pL1dx * pS1dy - pL1dy * pS1dx;
+    
+    const det = -pS1dx * pL1dy + pS1dy * pL1dx;
 
     if (Math.abs(det) > 0.0001) {
-      const t1 = (dx * pL1dy - dy * pL1dx) / det;
+      const t1 = (-dx * pL1dy + dy * pL1dx) / det;
+      
       const intersectPoint = {
         x: ptS1Start.x + t1 * pS1dx,
         y: ptS1Start.y + t1 * pS1dy
       };
 
+      // Ensure we draw the acute angle instead of the obtuse one
+      let ptL1Angle = ptL1Start;
+      const ptS1Angle = ptS1Start;
+
+      const vA = { x: ptL1Angle.x - intersectPoint.x, y: ptL1Angle.y - intersectPoint.y };
+      const vB = { x: ptS1Angle.x - intersectPoint.x, y: ptS1Angle.y - intersectPoint.y };
+
+      // If dot product is negative, angle is > 90 (obtuse)
+      if (vA.x * vB.x + vA.y * vB.y < 0) {
+        // Flip the L1 arm across the intersection to capture the acute angle
+        ptL1Angle = {
+          x: intersectPoint.x - vA.x,
+          y: intersectPoint.y - vA.y
+        };
+      }
+
       derived.push({
         id: `derived_angle_ll`,
         type: "angle",
-        points: [ptL1Start, intersectPoint, ptS1Start],
-        color: "#10b981", // Emerald 500
+        points: [ptL1Angle, intersectPoint, ptS1Angle],
+        color: "#10b981",
         label: "LL",
         locked: true,
+        isDashed: true // Renders the arms of the angle dashed
       });
 
       const llTextPos = { x: intersectPoint.x + 80, y: intersectPoint.y };
