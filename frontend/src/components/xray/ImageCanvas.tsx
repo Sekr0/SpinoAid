@@ -11,7 +11,10 @@ interface Annotation {
   text?: string;
   label?: string;
   locked?: boolean;
+  hideAngle?: boolean;
+  hidden?: boolean;
 }
+
 
 interface ImageFilters {
   brightness: number;
@@ -36,6 +39,7 @@ interface ImageCanvasProps {
   selectedAnnotation: string | null;
   onSelectedAnnotationChange: (id: string | null) => void;
   onToolChange: (tool: AnnotationTool) => void;
+  showAngles?: boolean;
 }
 
 // Theme-aware annotation colors - high contrast for both modes
@@ -75,6 +79,7 @@ const ImageCanvas = ({
   selectedAnnotation,
   onSelectedAnnotationChange,
   onToolChange,
+  showAngles = true,
 }: ImageCanvasProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const textInputRef = useRef<HTMLTextAreaElement>(null);
@@ -95,10 +100,24 @@ const ImageCanvas = ({
   const [drawStep, setDrawStep] = useState<number>(0);
   const [drawTool, setDrawTool] = useState<AnnotationTool | null>(null);
   const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null);
+  
+  // Right-click context menu state
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    annotationId: string;
+  } | null>(null);
 
   // Use a ref for currentAnnotation to avoid stale closures during event handling
   const currentAnnotationRef = useRef<Annotation | null>(null);
   const isDrawingRef = useRef(false);
+
+  // Close context menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = () => setContextMenu(null);
+    window.addEventListener("click", handleClickOutside);
+    return () => window.removeEventListener("click", handleClickOutside);
+  }, []);
 
   const updateCurrentAnnotation = (ann: Annotation | null) => {
     currentAnnotationRef.current = ann;
@@ -846,8 +865,12 @@ const ImageCanvas = ({
     return (Math.acos(cosAngle) * 180) / Math.PI;
   };
 
-  const renderAnnotation = (annotation: Annotation, isTemp = false) => {
-    const { type, points, color, id, text, label } = annotation;
+  const renderAnnotation = (annotation: Annotation | null, isTemp = false) => {
+    if (!annotation) return null;
+    if (annotation.hidden) return null;
+    if (!showAngles && annotation.type === "angle") return null;
+
+    const { id, type, points, color, text, label } = annotation;
     const opacity = isTemp ? 0.7 : 1;
     const isSelected = selectedAnnotation === id;
 
@@ -1218,6 +1241,27 @@ const ImageCanvas = ({
 
   const gammaValue = filters.gamma / 100;
 
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+      const pos = getRelativePosition(e);
+      
+      // Find the top-most annotation at this position
+      // Reverse array to check from top-rendered to bottom
+      const clickedAnnotation = [...annotations].reverse().find((ann) => 
+        isPointNearAnnotation(pos, ann)
+      );
+
+      if (clickedAnnotation) {
+        setContextMenu({
+          x: e.clientX,
+          y: e.clientY,
+          annotationId: clickedAnnotation.id
+        });
+      } else {
+        setContextMenu(null);
+      }
+    };
+
   return (
     <div
       ref={containerRef}
@@ -1227,6 +1271,7 @@ const ImageCanvas = ({
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
       onWheel={handleWheel}
+      onContextMenu={handleContextMenu}
     >
       <svg className="absolute w-0 h-0">
         <defs>
@@ -1293,6 +1338,37 @@ const ImageCanvas = ({
       {textInput && (
         <div className="absolute" style={{ left: position.x + textInput.x * zoom, top: position.y + textInput.y * zoom, width: textInput.width * zoom, height: textInput.height * zoom }}>
           <textarea ref={textInputRef} value={textInput.value} onChange={(e) => setTextInput({ ...textInput, value: e.target.value })} onBlur={handleTextSubmit} className="w-full h-full bg-card border-2 border-primary rounded px-2 py-1 text-sm outline-none resize-none" placeholder="Enter text..." />
+        </div>
+      )}
+      
+      {/* Context Menu Component */}
+      {contextMenu && (
+        <div 
+          className="absolute z-50 bg-popover text-popover-foreground border border-border shadow-md rounded-md py-1 min-w-[120px]"
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button 
+            className="w-full text-left px-3 py-1.5 text-sm hover:bg-muted transition-colors flex items-center justify-between"
+            onClick={(e) => {
+              e.stopPropagation();
+              const ann = annotations.find(a => a.id === contextMenu.annotationId);
+              if (ann) {
+                onAnnotationsChange(
+                  annotations.map(a => a.id === contextMenu.annotationId ? { ...a, hidden: !a.hidden } : a),
+                  false
+                );
+              }
+              setContextMenu(null);
+            }}
+          >
+            <span>{annotations.find(a => a.id === contextMenu.annotationId)?.hidden ? 'Show' : 'Hide'}</span>
+            {annotations.find(a => a.id === contextMenu.annotationId)?.hidden ? (
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/></svg>
+            ) : (
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/></svg>
+            )}
+          </button>
         </div>
       )}
 
