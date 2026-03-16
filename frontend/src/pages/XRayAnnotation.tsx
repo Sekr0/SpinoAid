@@ -11,6 +11,115 @@ import { useTheme } from "@/components/ThemeProvider";
 import { toast } from "@/hooks/use-toast";
 import { annotationsApi, autoAnnotateApi } from "@/services/api";
 
+const computeDerivedAnnotations = (baseAnnotations: Annotation[]): Annotation[] => {
+  const derived: Annotation[] = [];
+
+  // 1. Identify Femoral Heads
+  const femoralAnnotations = baseAnnotations.filter((a) => a.label && a.label.startsWith("Femoral head"));
+  // 2. Identify S1 Endplate
+  const s1Annotation = baseAnnotations.find((a) => a.label && a.label.includes("S1"));
+
+  if (femoralAnnotations.length === 2 && s1Annotation && s1Annotation.points.length >= 2) {
+    const f1 = femoralAnnotations[0].points;
+    const cx1 = (f1[0].x + f1[1].x) / 2;
+    const cy1 = (f1[0].y + f1[1].y) / 2;
+    const f2 = femoralAnnotations[1].points;
+    const cx2 = (f2[0].x + f2[1].x) / 2;
+    const cy2 = (f2[0].y + f2[1].y) / 2;
+
+    const fMid = { x: (cx1 + cx2) / 2, y: (cy1 + cy2) / 2 };
+
+    const s1p1 = s1Annotation.points[0];
+    const s1p2 = s1Annotation.points[1];
+    const s1Mid = { x: (s1p1.x + s1p2.x) / 2, y: (s1p1.y + s1p2.y) / 2 };
+
+    const s1Vector = { x: s1p2.x - s1p1.x, y: s1p2.y - s1p1.y };
+    let sPerpX = -s1Vector.y;
+    let sPerpY = s1Vector.x;
+    if (sPerpY < 0) {
+      sPerpX = s1Vector.y;
+      sPerpY = -s1Vector.x;
+    }
+    const sPerpLen = Math.hypot(sPerpX, sPerpY) || 1;
+    const sPerpScale = 300 / sPerpLen; // Much longer, 300px visible line
+    const s1PerpEnd = { x: s1Mid.x + sPerpX * sPerpScale, y: s1Mid.y + sPerpY * sPerpScale };
+
+    // PT requires a vertical line from the femoral midpoint.
+    const fVerticalEnd = { x: fMid.x, y: fMid.y - 300 }; // 300px long UP
+
+    // PI (Pelvic Incidence) at S1
+    derived.push({
+      id: `derived_angle_pi`,
+      type: "angle",
+      points: [s1PerpEnd, s1Mid, fMid],
+      color: "#06b6d4",
+      label: "PI",
+      locked: true,
+    });
+
+    // PT (Pelvic Tilt) at Femoral Heads
+    derived.push({
+      id: `derived_angle_pt`,
+      type: "angle",
+      points: [fVerticalEnd, fMid, s1Mid],
+      color: "#06b6d4",
+      label: "PT",
+      locked: true,
+    });
+    
+    // SS (Sacral Slope) Angle
+    // Take the lower x,y point of S1 endplate, draw a horizontal line, angle between horizontal and S1 endplate
+    const s1LowerY = s1p1.y > s1p2.y ? s1p1 : s1p2;
+    const s1HigherY = s1p1.y > s1p2.y ? s1p2 : s1p1;
+    const horizontalEnd = { x: s1LowerY.x + 150, y: s1LowerY.y };
+
+    derived.push({
+      id: `derived_angle_ss`,
+      type: "angle",
+      points: [s1HigherY, s1LowerY, horizontalEnd],
+      color: "#a855f7",
+      label: "SS",
+      locked: true,
+    });
+
+    const piTextPos = { x: s1Mid.x + 80, y: s1Mid.y - 80 };
+    derived.push({
+      id: `derived_text_pi`,
+      type: "text",
+      points: [piTextPos, { x: piTextPos.x + 80, y: piTextPos.y + 40 }],
+      color: "#06b6d4",
+      label: "PI Text",
+      text: "PI",
+      locked: true,
+    });
+
+    const ptTextPos = { x: fMid.x + 80, y: fMid.y - 80 };
+    derived.push({
+      id: `derived_text_pt`,
+      type: "text",
+      points: [ptTextPos, { x: ptTextPos.x + 80, y: ptTextPos.y + 40 }],
+      color: "#06b6d4",
+      label: "PT Text",
+      text: "PT",
+      locked: true,
+    });
+
+    const ssTextPos = { x: s1LowerY.x + 40, y: s1LowerY.y - 40 };
+    derived.push({
+      id: `derived_text_ss`,
+      type: "text",
+      points: [ssTextPos, { x: ssTextPos.x + 80, y: ssTextPos.y + 40 }],
+      color: "#a855f7",
+      label: "SS Text",
+      text: "SS",
+      locked: true,
+    });
+  }
+
+
+  return derived;
+};
+
 const XRayAnnotation = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -28,6 +137,7 @@ const XRayAnnotation = () => {
   // Tool state
   const [activeTool, setActiveTool] = useState<AnnotationTool>("select");
   const [isPanning, setIsPanning] = useState(false);
+  const [showAngles, setShowAngles] = useState(true);
 
   // View state
   const [zoom, setZoom] = useState(1);
@@ -250,10 +360,14 @@ const XRayAnnotation = () => {
 
   const handleAnnotationsChange = useCallback(
     (newAnnotations: Annotation[], skipHistory = false) => {
-      setAnnotations(newAnnotations);
+      const baseAnnotations = newAnnotations.filter(a => !a.id.startsWith("derived_"));
+      const derivedAnnotations = computeDerivedAnnotations(baseAnnotations);
+      const finalAnnotations = [...baseAnnotations, ...derivedAnnotations];
+
+      setAnnotations(finalAnnotations);
       if (!skipHistory) {
         const newHistory = history.slice(0, historyIndex + 1);
-        newHistory.push(newAnnotations);
+        newHistory.push(finalAnnotations);
         setHistory(newHistory);
         setHistoryIndex(newHistory.length - 1);
       }
@@ -302,6 +416,17 @@ const XRayAnnotation = () => {
   const handleToggleLock = useCallback((id: string) => {
     setAnnotations((prev) => {
       const updated = prev.map((ann) => ann.id === id ? { ...ann, locked: !ann.locked } : ann);
+      const newHistory = history.slice(0, historyIndex + 1);
+      newHistory.push(updated);
+      setHistory(newHistory);
+      setHistoryIndex(newHistory.length - 1);
+      return updated;
+    });
+  }, [history, historyIndex]);
+
+  const handleToggleVisibility = useCallback((id: string) => {
+    setAnnotations((prev) => {
+      const updated = prev.map((ann) => ann.id === id ? { ...ann, hidden: !ann.hidden } : ann);
       const newHistory = history.slice(0, historyIndex + 1);
       newHistory.push(updated);
       setHistory(newHistory);
@@ -402,24 +527,50 @@ const XRayAnnotation = () => {
       const scaleX = apiWidth ? imgW / apiWidth : 1;
       const scaleY = apiHeight ? imgH / apiHeight : 1;
 
-      (endplatesResult.endplates || [])
-        .filter((ep: { detected?: boolean }) => ep.detected !== false)
-        .forEach((ep: { label: string; endplate?: string; x1: number; y1: number; x2: number; y2: number }, idx: number) => {
-          const x1 = ep.x1 * scaleX;
-          const y1 = ep.y1 * scaleY;
-          const x2 = ep.x2 * scaleX;
-          const y2 = ep.y2 * scaleY;
-          const labelText = ep.endplate ? `${ep.label} - ${ep.endplate}` : ep.label;
-          newAnnotations.push({
-            id: `auto_endplate_${ts}_${idx}`,
-            type: "line",
-            points: [{ x: x1, y: y1 }, { x: x2, y: y2 }],
-            color: "#f59e0b",
-            label: labelText,
-          });
+      const rawEndplates = (endplatesResult.endplates || []).filter((ep: { detected?: boolean }) => ep.detected !== false);
+      
+      const s1Endplates = rawEndplates.filter((ep: any) => ep.label === "S1");
+      const otherEndplates = rawEndplates.filter((ep: any) => ep.label !== "S1");
+
+      otherEndplates.forEach((ep: any, idx: number) => {
+        const x1 = ep.x1 * scaleX;
+        const y1 = ep.y1 * scaleY;
+        const x2 = ep.x2 * scaleX;
+        const y2 = ep.y2 * scaleY;
+        const labelText = ep.endplate ? `${ep.label} - ${ep.endplate}` : ep.label;
+        newAnnotations.push({
+          id: `auto_endplate_${ts}_${idx}`,
+          type: "line",
+          points: [{ x: x1, y: y1 }, { x: x2, y: y2 }],
+          color: "#f59e0b",
+          label: labelText,
         });
+      });
+
+      if (s1Endplates.length > 0) {
+        let sumX1 = 0, sumY1 = 0, sumX2 = 0, sumY2 = 0;
+        s1Endplates.forEach((ep: any) => {
+          sumX1 += ep.x1;
+          sumY1 += ep.y1;
+          sumX2 += ep.x2;
+          sumY2 += ep.y2;
+        });
+        const c = s1Endplates.length;
+        newAnnotations.push({
+          id: `auto_endplate_${ts}_s1_merged`,
+          type: "line",
+          points: [
+            { x: (sumX1 / c) * scaleX, y: (sumY1 / c) * scaleY },
+            { x: (sumX2 / c) * scaleX, y: (sumY2 / c) * scaleY }
+          ],
+          color: "#f59e0b",
+          label: "S1",
+        });
+      }
 
       if (newAnnotations.length > 0) {
+        // We do not compute PT/PI/LL/SS here anymore. 
+        // handleAnnotationsChange will automatically apply computeDerivedAnnotations.
         handleAnnotationsChange([...annotations, ...newAnnotations]);
         toast({
           title: "Auto Annotate complete",
@@ -472,6 +623,18 @@ const XRayAnnotation = () => {
           <span className="text-sm text-muted-foreground hidden sm:block">
             {annotations.length} annotation{annotations.length !== 1 ? "s" : ""}
           </span>
+          <button
+            onClick={() => setShowAngles(!showAngles)}
+            className="p-2 ml-2 rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/80 transition-colors focus-ring"
+            aria-label="Toggle Angles"
+            title={showAngles ? "Hide Angles" : "Show Angles"}
+          >
+            {showAngles ? (
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/></svg>
+            ) : (
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/></svg>
+            )}
+          </button>
           <MedicalButton
             variant="success"
             size="sm"
@@ -482,7 +645,7 @@ const XRayAnnotation = () => {
           </MedicalButton>
           <button
             onClick={toggleTheme}
-            className="p-2 rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/80 transition-colors focus-ring"
+            className="p-2 ml-1 rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/80 transition-colors focus-ring"
             aria-label="Toggle theme"
           >
             {theme === "light" ? (
@@ -532,6 +695,7 @@ const XRayAnnotation = () => {
           selectedAnnotation={selectedAnnotation}
           onSelectedAnnotationChange={setSelectedAnnotation}
           onToolChange={handleToolChange}
+          showAngles={showAngles}
         />
 
         {/* Right Panel - Image Adjustments + Shape Dimensions + Annotation Labels */}
@@ -567,6 +731,7 @@ const XRayAnnotation = () => {
             onSelect={setSelectedAnnotation}
             onDelete={handleDeleteAnnotation}
             onToggleLock={handleToggleLock}
+            onToggleVisibility={handleToggleVisibility}
           />
         </aside>
       </div>
