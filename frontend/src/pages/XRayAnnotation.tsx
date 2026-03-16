@@ -80,6 +80,7 @@ const computeDerivedAnnotations = (baseAnnotations: Annotation[]): Annotation[] 
       color: "#a855f7",
       label: "SS",
       locked: true,
+      hideFirstLine: true,
     });
 
     const piTextPos = { x: s1Mid.x + 80, y: s1Mid.y - 80 };
@@ -732,6 +733,8 @@ const XRayAnnotation = () => {
             onDelete={handleDeleteAnnotation}
             onToggleLock={handleToggleLock}
             onToggleVisibility={handleToggleVisibility}
+            showAngles={showAngles}
+            onToggleShowAngles={() => setShowAngles(!showAngles)}
           />
         </aside>
       </div>

@@ -13,6 +13,7 @@ interface Annotation {
   locked?: boolean;
   hideAngle?: boolean;
   hidden?: boolean;
+  hideFirstLine?: boolean;
 }
 
 
@@ -1191,7 +1192,9 @@ const ImageCanvas = ({
           <g key={id} opacity={opacity}>
             {renderSelectionHighlight()}
             {renderLabel()}
-            <line x1={points[0].x} y1={points[0].y} x2={points[1].x} y2={points[1].y} stroke={color} strokeWidth={2 / zoom} />
+            {!annotation.hideFirstLine && (
+              <line x1={points[0].x} y1={points[0].y} x2={points[1].x} y2={points[1].y} stroke={color} strokeWidth={2 / zoom} />
+            )}
             {points.length >= 3 && (
               <g>
                 <line x1={points[1].x} y1={points[1].y} x2={points[2].x} y2={points[2].y} stroke={color} strokeWidth={2 / zoom} />
