@@ -196,8 +196,10 @@ const computeDerivedAnnotations = (baseAnnotations: Annotation[]): Annotation[] 
       pL1dy = -pL1dy;
     }
 
-    const ptS1Start = { x: extS1.x, y: extS1.y };
-    const ptL1Start = { x: extL1.x, y: extL1.y };
+    // We need to trace these perpendicular lines from the endplates to find their intersection.
+    // Start them from the right edge of each endplate
+    const ptS1Start = { x: s1R.x, y: s1R.y };
+    const ptL1Start = { x: l1R.x, y: l1R.y };
 
     // Line intersection math:
     // P1 + t1 * V1 = P2 + t2 * V2
